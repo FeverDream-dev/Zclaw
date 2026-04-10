@@ -335,6 +335,31 @@ func registerProviders(reg *providers.LocalRegistry, cfg Config) {
 			os.Getenv("CF_API_KEY"),
 		))
 	}
+	if key := os.Getenv("OLLAMA_CLOUD_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewOllamaCloudAdapter(key))
+	}
+	if key := os.Getenv("ZAI_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewZAIAdapter(key))
+	}
+	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewDeepSeekAdapter(key))
+	}
+	if key := os.Getenv("TOGETHER_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewTogetherAdapter(key))
+	}
+	if key := os.Getenv("MINIMAX_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewMiniMaxAdapter(key))
+	}
+	if key := os.Getenv("MOONSHOT_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewMoonshotAdapter(key))
+	}
+	if token := os.Getenv("VERTEX_AI_ACCESS_TOKEN"); token != "" {
+		reg.Register(context.Background(), adapters.NewVertexAIAdapter(
+			token,
+			envOr("VERTEX_AI_PROJECT_ID", ""),
+			envOr("VERTEX_AI_REGION", "us-central1"),
+		))
+	}
 }
 
 func registerRoutes(mux *http.ServeMux, agentRepo *storage.AgentRepository, provReg *providers.LocalRegistry, provCfgRepo *storage.ProviderConfigRepository, sched *scheduler.Scheduler, browserMgr *browser.LocalSessionManager, metrics *telemetry.MetricsCollector, healthMon *telemetry.HealthMonitor, audit *telemetry.LogAuditLogger, cfg Config) {

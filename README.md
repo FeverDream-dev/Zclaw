@@ -178,13 +178,14 @@ dockclawctl doctor                                        # Check system health
 
 ## 🤖 Providers
 
-### Built-in adapters (13 providers)
+### Built-in adapters (20 providers)
 | Provider | Auth | Tools | Streaming | Vision | Notes |
 |---|---|---|---|---|---|
 | **OpenAI** | API Key | ✅ | ✅ | ✅ | GPT-4o, GPT-4o-mini, o1 |
 | **Anthropic** | API Key | ✅ | ✅ | ✅ | Claude Sonnet 4, Claude Opus 4 |
 | **OpenRouter** | API Key | ✅ | ✅ | ✅ | Gateway to 100+ models |
 | **Ollama** | None | ✅ | ✅ | ❌ | Local models, free |
+| **Ollama Cloud** | API Key | ✅ | ✅ | ❌ | Hosted models: GPT-OSS, DeepSeek, Qwen, etc. |
 | **LiteLLM** | API Key | ✅ | ✅ | ✅ | Generic OpenAI-compatible |
 | **Groq** | API Key | ✅ | ✅ | ❌ | Fast inference |
 | **Google Gemini** | API Key | ✅ | ✅ | ✅ | Gemini Pro, Flash |
@@ -194,6 +195,12 @@ dockclawctl doctor                                        # Check system health
 | **Alibaba Qwen** | API Key | ✅ | ✅ | ✅ | Qwen models |
 | **Fireworks** | API Key | ✅ | ✅ | ✅ | Fast open-source inference |
 | **Cloudflare AI** | API Key | ✅ | ✅ | ✅ | Workers AI Gateway |
+| **Z.AI (Zhipu)** | API Key | ✅ | ✅ | ✅ | GLM-5.1, GLM-4.7, GLM-4V, all variants + Coding Plan |
+| **DeepSeek** | API Key | ✅ | ✅ | ❌ | DeepSeek-V3, R1 (reasoning), Coder-V2 |
+| **Together AI** | API Key | ✅ | ✅ | ❌ | Llama 3.3/3.1 70B/405B, Qwen, DeepSeek-R1, Mixtral |
+| **MiniMax** | API Key | ✅ | ✅ | ❌ | MiniMax-Text-01 (1M ctx), M1 (reasoning), abab6.5 |
+| **Moonshot AI** | API Key | ❌ | ✅ | ❌ | Kimi models, 8K–128K context |
+| **Google Vertex AI** | OAuth Token | ✅ | ✅ | ✅ | Gemini, Claude, Llama via Google Cloud |
 
 Adding a provider is a single Go file implementing the `Provider` interface.
 
