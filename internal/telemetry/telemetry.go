@@ -112,11 +112,13 @@ func (mc *MetricsCollector) Set(name MetricName, value int64) {
 }
 
 func (mc *MetricsCollector) Get(name MetricName) int64 {
+	if c, ok := mc.counters[name]; ok {
+		if v := c.Load(); v != 0 {
+			return v
+		}
+	}
 	if g, ok := mc.gauges[name]; ok {
 		return g.Load()
-	}
-	if c, ok := mc.counters[name]; ok {
-		return c.Load()
 	}
 	return 0
 }

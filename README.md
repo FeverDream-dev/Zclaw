@@ -103,10 +103,15 @@ Zclaw/
 │   ├── dockclawd/          # Control plane daemon
 │   └── dockclawctl/        # CLI admin tool
 ├── internal/
-│   ├── agents/             # Agent registry & lifecycle
+│   ├── agents/             # Agent registry, lifecycle, sub-agents, templates
+│   ├── api/                # Dashboard portal API (fleet overview, stats)
 │   ├── providers/          # Provider interface & registry
-│   │   └── adapters/       # OpenAI, Anthropic, OpenRouter, Ollama, LiteLLM
-│   ├── storage/            # SQLite WAL + migrations
+│   │   └── adapters/       # 13 adapters: OpenAI, Anthropic, OpenRouter, Ollama,
+│   │                      #   LiteLLM, Groq, Gemini, Mistral, xAI, Bedrock,
+│   │                      #   Qwen, Fireworks, Cloudflare
+│   ├── tools/              # 20+ built-in tools (web, file, code, data, system)
+│   ├── connections/        # MCP, WebSocket, webhooks, file watchers
+│   ├── storage/            # SQLite WAL + migrations V1-V9
 │   ├── scheduler/          # Event-driven task scheduler
 │   ├── runtime/            # Docker worker pool management
 │   ├── browser/            # Browser session pooling
@@ -139,6 +144,30 @@ dockclawctl agent delete <id>                             # Delete an agent
 # Task management
 dockclawctl task enqueue <agent-id> "analyze this data"  # Send task to agent
 
+# Sub-agents
+dockclawctl subagent spawn <parent-id> <name> <task>     # Spawn a child agent
+dockclawctl subagent list <parent-id>                     # List sub-agents
+dockclawctl subagent cancel <id>                          # Cancel a sub-agent
+
+# Templates
+dockclawctl template list                                 # List agent templates
+dockclawctl template instantiate <name> <parent-id>       # Create agent from template
+
+# Tools
+dockclawctl tool list                                     # List 20+ built-in tools
+dockclawctl tool get <id>                                 # Show tool details
+dockclawctl tool execute <id> '{"url":"https://..."}'    # Execute a tool
+
+# Connections
+dockclawctl connection list                               # Show connection statuses
+
+# Dashboard
+dockclawctl dashboard overview                            # Fleet overview
+dockclawctl dashboard stats                               # Dashboard stats
+dockclawctl dashboard errors                              # Recent errors
+dockclawctl dashboard activity                            # Recent activity
+dockclawctl dashboard export                              # Export all agents
+
 # System
 dockclawctl stats                                         # Show system stats
 dockclawctl provider list                                 # List registered providers
@@ -149,7 +178,7 @@ dockclawctl doctor                                        # Check system health
 
 ## 🤖 Providers
 
-### Built-in adapters
+### Built-in adapters (13 providers)
 | Provider | Auth | Tools | Streaming | Vision | Notes |
 |---|---|---|---|---|---|
 | **OpenAI** | API Key | ✅ | ✅ | ✅ | GPT-4o, GPT-4o-mini, o1 |
@@ -157,11 +186,46 @@ dockclawctl doctor                                        # Check system health
 | **OpenRouter** | API Key | ✅ | ✅ | ✅ | Gateway to 100+ models |
 | **Ollama** | None | ✅ | ✅ | ❌ | Local models, free |
 | **LiteLLM** | API Key | ✅ | ✅ | ✅ | Generic OpenAI-compatible |
-
-### Expansion targets (25+ providers)
-Alibaba Model Studio · Amazon Bedrock · BytePlus · Chutes · Cloudflare AI Gateway · ComfyUI · fal · Fireworks · GLM · MiniMax · Mistral · Moonshot AI · OpenCode · Qianfan · Qwen · Runway · StepFun · Venice · xAI · Z.AI · Groq · Gemini · Vertex AI
+| **Groq** | API Key | ✅ | ✅ | ❌ | Fast inference |
+| **Google Gemini** | API Key | ✅ | ✅ | ✅ | Gemini Pro, Flash |
+| **Mistral** | API Key | ✅ | ✅ | ✅ | Mistral Large, Medium, Small |
+| **xAI** | API Key | ✅ | ✅ | ✅ | Grok models |
+| **AWS Bedrock** | Access Key | ✅ | ✅ | ✅ | Multi-model gateway |
+| **Alibaba Qwen** | API Key | ✅ | ✅ | ✅ | Qwen models |
+| **Fireworks** | API Key | ✅ | ✅ | ✅ | Fast open-source inference |
+| **Cloudflare AI** | API Key | ✅ | ✅ | ✅ | Workers AI Gateway |
 
 Adding a provider is a single Go file implementing the `Provider` interface.
+
+---
+
+## 🔧 Built-in Tools (20+)
+
+| Category | Tools |
+|---|---|
+| **Web** | WebFetch (HTTP GET with headers) |
+| **File** | FileRead, FileWrite |
+| **Shell** | ShellExec (commands with timeout) |
+| **HTTP** | HTTPRequest (any method/headers/body) |
+| **Code** | PythonExec, JavaScriptExec, GoEval |
+| **Data** | CSVRead, TextSearch, TextReplace, Base64Encode, Base64Decode, Hash (SHA256/MD5) |
+| **System** | ListFiles, DiskUsage, Env, Timestamp |
+| **Utility** | JSONParse, Wait |
+
+All tools execute with per-tool timeouts and return structured `ToolResult` with success/error/artifact metadata.
+
+---
+
+## 🔌 Connections
+
+| Type | Description |
+|---|---|
+| **MCP Server** | JSON-RPC server for tool integration |
+| **WebSocket Bridge** | Polling bridge for real-time clients |
+| **Webhooks** | Sender/receiver with HMAC signing |
+| **File Watcher** | Polling file system watcher |
+
+All connections are managed by the unified `ConnectionManager` and exposed via the API.
 
 ---
 
@@ -191,32 +255,33 @@ Adding a provider is a single Go file implementing the `Provider` interface.
 
 ## 🗺 Roadmap
 
-### Phase 0–1 ✅ Current
+### Phase 0–1 ✅
 - [x] Architecture ADRs
 - [x] Go control plane with SQLite storage
 - [x] Docker Compose stack + operator scripts
 - [x] Agent CRUD via API and CLI
-- [x] 5 provider adapters
+- [x] 13 provider adapters
 - [x] Playwright browser worker
 - [x] Scheduler with event-driven wakeup
 - [x] Health checks and telemetry
 
-### Phase 2–3 (Next)
-- [ ] Agent templates and policy presets
+### Phase 2–3 ✅
+- [x] Agent templates and policy presets
+- [x] Sub-agent spawning system
+- [x] 20+ built-in tools (web, file, code, data, system)
+- [x] MCP / WebSocket / webhook / file watcher connections
+- [x] Fleet management dashboard API
+
+### Phase 4–6 (Current)
 - [ ] Per-agent workspace management
 - [ ] Cron-based schedules with jitter
 - [ ] Active-hours windows
-- [ ] Event-driven wakeup from task completion
-
-### Phase 4–6
-- [ ] 25+ provider adapters (full OpenClaw parity)
-- [ ] Tool-worker sandbox with shell execution
 - [ ] Browser pooling with strict concurrency
 - [ ] Conversation summarization
 - [ ] Artifact retention and cleanup
 
 ### Phase 7–9
-- [ ] Fleet management dashboard
+- [ ] Frontend dashboard UI
 - [ ] Benchmark harness (10/50/100/300 agents)
 - [ ] Density tuning and idle measurement
 - [ ] Multi-node support (optional Postgres backend)

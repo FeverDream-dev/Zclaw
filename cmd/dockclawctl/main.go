@@ -246,7 +246,268 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(agentCmd, taskCmd, statsCmd, providerCmd, doctorCmd)
+	// Tool commands.
+	toolCmd := &cobra.Command{Use: "tool", Aliases: []string{"tools"}, Short: "List and execute tools"}
+
+	toolCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List registered tools",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/tools")
+			if err != nil {
+				return err
+			}
+			var tools []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Category    string `json:"category"`
+			}
+			json.Unmarshal(resp, &tools)
+
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintf(tw, "ID\tNAME\tCATEGORY\tDESCRIPTION\n")
+			for _, t := range tools {
+				desc := t.Description
+				if len(desc) > 50 {
+					desc = desc[:50] + "..."
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", t.ID, t.Name, t.Category, desc)
+			}
+			tw.Flush()
+			return nil
+		},
+	})
+
+	toolCmd.AddCommand(&cobra.Command{
+		Use:   "get [id]",
+		Short: "Get tool details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			resp, err := apiGet("/api/v1/tools/" + args[0])
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	toolCmd.AddCommand(&cobra.Command{
+		Use:   "execute [id] [json-params]",
+		Short: "Execute a tool with JSON params",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			params := map[string]any{}
+			if len(args) > 1 {
+				json.Unmarshal([]byte(strings.Join(args[1:], " ")), &params)
+			}
+			resp, err := apiPost("/api/v1/tools/"+args[0]+"/execute", params)
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	// Connection commands.
+	connCmd := &cobra.Command{Use: "connection", Aliases: []string{"connections"}, Short: "View connection status"}
+
+	connCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List connection statuses",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/connections")
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	// Sub-agent commands.
+	subagentCmd := &cobra.Command{Use: "subagent", Aliases: []string{"subagents"}, Short: "Manage sub-agents"}
+
+	subagentCmd.AddCommand(&cobra.Command{
+		Use:   "spawn [parent-id] [name] [task]",
+		Short: "Spawn a new sub-agent",
+		Args:  cobra.MinimumNArgs(3),
+		RunE: func(_ *cobra.Command, args []string) error {
+			body := map[string]any{
+				"parent_id":        args[0],
+				"name":             args[1],
+				"task_description": strings.Join(args[2:], " "),
+			}
+			resp, err := apiPost("/api/v1/subagents", body)
+			if err != nil {
+				return err
+			}
+			var sa map[string]any
+			json.Unmarshal(resp, &sa)
+			fmt.Printf("Spawned sub-agent: %s (id: %s)\n", args[1], sa["id"])
+			return nil
+		},
+	})
+
+	subagentCmd.AddCommand(&cobra.Command{
+		Use:   "list [parent-id]",
+		Short: "List sub-agents for a parent",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			resp, err := apiGet("/api/v1/subagents/parent/" + args[0])
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	subagentCmd.AddCommand(&cobra.Command{
+		Use:   "cancel [id]",
+		Short: "Cancel a sub-agent",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			_, err := apiPost("/api/v1/subagents/"+args[0]+"/cancel", nil)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Cancelled sub-agent: %s\n", args[0])
+			return nil
+		},
+	})
+
+	// Template commands.
+	templateCmd := &cobra.Command{Use: "template", Aliases: []string{"templates"}, Short: "Manage agent templates"}
+
+	templateCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List available templates",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/templates")
+			if err != nil {
+				return err
+			}
+			var templates []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			}
+			json.Unmarshal(resp, &templates)
+
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintf(tw, "NAME\tDESCRIPTION\n")
+			for _, t := range templates {
+				fmt.Fprintf(tw, "%s\t%s\n", t.Name, t.Description)
+			}
+			tw.Flush()
+			return nil
+		},
+	})
+
+	templateCmd.AddCommand(&cobra.Command{
+		Use:   "instantiate [name] [parent-id]",
+		Short: "Create an agent from a template",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			body := map[string]string{"parent_id": args[1]}
+			resp, err := apiPost("/api/v1/templates/"+args[0]+"/instantiate", body)
+			if err != nil {
+				return err
+			}
+			var agent map[string]any
+			json.Unmarshal(resp, &agent)
+			fmt.Printf("Instantiated agent from template %s: %s\n", args[0], agent["id"])
+			return nil
+		},
+	})
+
+	// Dashboard commands.
+	dashboardCmd := &cobra.Command{Use: "dashboard", Aliases: []string{"dash"}, Short: "Dashboard overview"}
+
+	dashboardCmd.AddCommand(&cobra.Command{
+		Use:   "stats",
+		Short: "Show dashboard stats",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/dashboard/stats")
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	dashboardCmd.AddCommand(&cobra.Command{
+		Use:   "overview",
+		Short: "Show fleet overview",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/dashboard")
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	dashboardCmd.AddCommand(&cobra.Command{
+		Use:   "errors",
+		Short: "Show recent errors",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/dashboard/errors")
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	dashboardCmd.AddCommand(&cobra.Command{
+		Use:   "activity",
+		Short: "Show recent activity",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/dashboard/activity")
+			if err != nil {
+				return err
+			}
+			var pretty bytes.Buffer
+			json.Indent(&pretty, resp, "", "  ")
+			fmt.Println(pretty.String())
+			return nil
+		},
+	})
+
+	dashboardCmd.AddCommand(&cobra.Command{
+		Use:   "export",
+		Short: "Export all agents as JSON",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resp, err := apiGet("/api/v1/dashboard/export")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(resp))
+			return nil
+		},
+	})
+
+	rootCmd.AddCommand(agentCmd, taskCmd, statsCmd, providerCmd, doctorCmd, toolCmd, connCmd, subagentCmd, templateCmd, dashboardCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

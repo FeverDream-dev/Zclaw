@@ -83,6 +83,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		migrationV5,
 		migrationV6,
 		migrationV7,
+		migrationV8,
+		migrationV9,
 	}
 
 	for i, m := range migrations {
@@ -280,6 +282,65 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at);
+`
+
+const migrationV8 = `
+CREATE TABLE IF NOT EXISTS subagents (
+	id TEXT PRIMARY KEY,
+	parent_id TEXT NOT NULL,
+	child_agent_id TEXT,
+	state TEXT NOT NULL DEFAULT 'spawned',
+	task_description TEXT NOT NULL DEFAULT '',
+	result TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	completed_at TEXT,
+	FOREIGN KEY (parent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagents_parent ON subagents(parent_id);
+CREATE INDEX IF NOT EXISTS idx_subagents_state ON subagents(state);
+
+CREATE TABLE IF NOT EXISTS agent_templates (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	config_json TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+ALTER TABLE agents ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';
+`
+
+const migrationV9 = `
+CREATE TABLE IF NOT EXISTS tool_executions (
+	id TEXT PRIMARY KEY,
+	agent_id TEXT NOT NULL,
+	task_id TEXT,
+	tool_id TEXT NOT NULL,
+	params TEXT NOT NULL DEFAULT '{}',
+	result TEXT NOT NULL DEFAULT '',
+	success INTEGER NOT NULL DEFAULT 0,
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_exec_agent ON tool_executions(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_time ON tool_executions(created_at);
+
+CREATE TABLE IF NOT EXISTS connections (
+	id TEXT PRIMARY KEY,
+	agent_id TEXT,
+	type TEXT NOT NULL,
+	config TEXT NOT NULL DEFAULT '{}',
+	state TEXT NOT NULL DEFAULT 'stopped',
+	last_activity TEXT,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_connections_agent ON connections(agent_id);
 `
 
 // AgentRepository implements agents.Registry using SQLite.

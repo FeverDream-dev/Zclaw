@@ -13,13 +13,16 @@ import (
 	"time"
 
 	"github.com/zclaw/zclaw/internal/agents"
+	"github.com/zclaw/zclaw/internal/api"
 	"github.com/zclaw/zclaw/internal/browser"
+	"github.com/zclaw/zclaw/internal/connections"
 	"github.com/zclaw/zclaw/internal/memory"
 	"github.com/zclaw/zclaw/internal/providers"
 	"github.com/zclaw/zclaw/internal/providers/adapters"
 	"github.com/zclaw/zclaw/internal/scheduler"
 	"github.com/zclaw/zclaw/internal/storage"
 	"github.com/zclaw/zclaw/internal/telemetry"
+	"github.com/zclaw/zclaw/internal/tools"
 )
 
 const version = "0.1.0"
@@ -195,8 +198,38 @@ func run(cfg Config) error {
 	sched.Start(ctx)
 	slog.Info("scheduler started", "max_workers", cfg.WorkerPoolSize)
 
+	toolReg := tools.NewLocalToolRegistry()
+	registerBuiltinTools(toolReg)
+	slog.Info("tools registered", "count", len(toolReg.List()))
+
+	connMgr := connections.NewConnectionManager()
+	if envOr("ZCLAW_MCP_ENABLED", "") == "true" {
+		mcpServer := connections.NewMCPServer()
+		connMgr.RegisterMCP(mcpServer)
+	}
+	slog.Info("connection manager initialized")
+
+	subAgentRepo := storage.NewSubAgentRepository(db)
+	templateRepo := storage.NewTemplateRepository(db)
+	_ = subAgentRepo
+	_ = templateRepo
+	slog.Info("sub-agent system initialized")
+
 	mux := http.NewServeMux()
 	registerRoutes(mux, agentRepo, providerReg, providerConfigRepo, sched, browserMgr, metrics, healthMon, audit, cfg)
+
+	api.RegisterPortalRoutes(mux, api.PortalDeps{
+		AgentRepo:  agentRepo,
+		Scheduler:  sched,
+		Audit:      audit,
+		BrowserMgr: browserMgr,
+		ProvReg:    providerReg,
+	})
+	slog.Info("dashboard portal routes registered")
+
+	registerToolRoutes(mux, toolReg)
+	registerConnectionRoutes(mux, connMgr)
+	registerSubAgentRoutes(mux, subAgentRepo)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
@@ -269,6 +302,38 @@ func registerProviders(reg *providers.LocalRegistry, cfg Config) {
 	reg.Register(context.Background(), adapters.NewOllamaAdapter(os.Getenv("OLLAMA_BASE_URL")))
 	if baseURL := os.Getenv("LITELLM_BASE_URL"); baseURL != "" {
 		reg.Register(context.Background(), adapters.NewLiteLLMAdapter(os.Getenv("LITELLM_API_KEY"), baseURL))
+	}
+	if key := os.Getenv("GROQ_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewGroqAdapter(key))
+	}
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewGeminiAdapter(key))
+	}
+	if key := os.Getenv("MISTRAL_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewMistralAdapter(key))
+	}
+	if key := os.Getenv("XAI_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewXAIAdapter(key))
+	}
+	if key := os.Getenv("AWS_ACCESS_KEY_ID"); key != "" {
+		reg.Register(context.Background(), adapters.NewBedrockAdapter(
+			envOr("AWS_BEDROCK_BASE_URL", ""),
+			key,
+			os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		))
+	}
+	if key := os.Getenv("QWEN_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewQwenAdapter(key))
+	}
+	if key := os.Getenv("FIREWORKS_API_KEY"); key != "" {
+		reg.Register(context.Background(), adapters.NewFireworksAdapter(key))
+	}
+	if accountID := os.Getenv("CF_ACCOUNT_ID"); accountID != "" {
+		reg.Register(context.Background(), adapters.NewCloudflareAIGatewayAdapter(
+			accountID,
+			os.Getenv("CF_GATEWAY_ID"),
+			os.Getenv("CF_API_KEY"),
+		))
 	}
 }
 
@@ -433,3 +498,148 @@ func envIntOr(key string, fallback int) int {
 
 // Suppress unused imports for memory package (used in full API routes).
 var _ memory.ConversationID
+
+func registerBuiltinTools(reg *tools.LocalToolRegistry) {
+	builtins := []tools.ToolExecutor{
+		tools.NewWebFetchTool(),
+		tools.NewFileReadTool(),
+		tools.NewFileWriteTool(),
+		tools.NewShellExecTool(),
+		tools.NewHTTPRequestTool(),
+		tools.NewJSONParseTool(),
+		tools.NewWaitTool(),
+		tools.NewPythonExecTool(),
+		tools.NewJavaScriptExecTool(),
+		tools.NewGoEvalTool(),
+		tools.NewCSVReadTool(),
+		tools.NewTextSearchTool(),
+		tools.NewTextReplaceTool(),
+		tools.NewBase64EncodeTool(),
+		tools.NewBase64DecodeTool(),
+		tools.NewHashTool(),
+		tools.NewListFilesTool(),
+		tools.NewDiskUsageTool(),
+		tools.NewEnvTool(),
+		tools.NewTimestampTool(),
+	}
+	for _, t := range builtins {
+		if err := reg.Register(t); err != nil {
+			slog.Warn("tool registration failed", "tool", t.Spec().ID, "error", err)
+		}
+	}
+}
+
+func registerToolRoutes(mux *http.ServeMux, reg *tools.LocalToolRegistry) {
+	mux.HandleFunc("GET /api/v1/tools", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(reg.List())
+	})
+
+	mux.HandleFunc("GET /api/v1/tools/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		t, ok := reg.Get(id)
+		if !ok {
+			http.Error(w, "tool not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(t.Spec())
+	})
+
+	mux.HandleFunc("POST /api/v1/tools/{id}/execute", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var params map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		result, err := reg.Execute(r.Context(), id, params)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	})
+}
+
+func registerConnectionRoutes(mux *http.ServeMux, cm *connections.ConnectionManager) {
+	mux.HandleFunc("GET /api/v1/connections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cm.Status())
+	})
+}
+
+func registerSubAgentRoutes(mux *http.ServeMux, repo *storage.SubAgentRepository) {
+	mux.HandleFunc("POST /api/v1/subagents", func(w http.ResponseWriter, r *http.Request) {
+		var req agents.SubAgentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		sa, err := repo.Spawn(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(sa)
+	})
+
+	mux.HandleFunc("GET /api/v1/subagents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		sa, err := repo.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sa)
+	})
+
+	mux.HandleFunc("GET /api/v1/subagents/parent/{parentId}", func(w http.ResponseWriter, r *http.Request) {
+		list, err := repo.ListByParent(r.Context(), r.PathValue("parentId"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(list)
+	})
+
+	mux.HandleFunc("POST /api/v1/subagents/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if err := repo.Cancel(r.Context(), r.PathValue("id")); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /api/v1/templates", func(w http.ResponseWriter, r *http.Request) {
+		templates, err := repo.List(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(templates)
+	})
+
+	mux.HandleFunc("POST /api/v1/templates/{name}/instantiate", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ParentID string `json:"parent_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agent, err := repo.InstantiateTemplate(r.Context(), agents.AgentID(body.ParentID), r.PathValue("name"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(agent)
+	})
+}
