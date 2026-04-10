@@ -1,0 +1,19 @@
+{
+  "id": "ollama",
+  "name": "Ollama (Local)",
+  "auth_mode": "none",
+  "base_url": "http://localhost:11434",
+  "cost_class": "free",
+  "models": [
+    {
+      "id": "llama3.2",
+      "max_context_tokens": 128000,
+      "capabilities": ["tools", "streaming"]
+    },
+    {
+      "id": "codellama",
+      "max_context_tokens": 16000,
+      "capabilities": ["streaming"]
+    }
+  ]
+}

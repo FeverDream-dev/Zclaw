@@ -1,0 +1,13 @@
+{
+  "name": "full-access",
+  "description": "Full access policy - shell, browser, generous resources",
+  "allow_shell": true,
+  "allow_browser": true,
+  "allow_background_subagents": true,
+  "max_memory_mb": 1024,
+  "max_cpu_fraction": 1.0,
+  "timeout_seconds": 600,
+  "max_concurrent_tasks": 3,
+  "network_mode": "full",
+  "filesystem_mode": "read-write"
+}

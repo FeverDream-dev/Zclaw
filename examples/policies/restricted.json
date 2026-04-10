@@ -1,0 +1,13 @@
+{
+  "name": "restricted",
+  "description": "Default restricted policy - no shell, no browser, minimal resources",
+  "allow_shell": false,
+  "allow_browser": false,
+  "allow_background_subagents": false,
+  "max_memory_mb": 128,
+  "max_cpu_fraction": 0.25,
+  "timeout_seconds": 60,
+  "max_concurrent_tasks": 1,
+  "network_mode": "none",
+  "filesystem_mode": "read-only"
+}

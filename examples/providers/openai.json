@@ -1,0 +1,21 @@
+{
+  "id": "openai",
+  "name": "OpenAI",
+  "auth_mode": "api_key",
+  "base_url": "https://api.openai.com/v1",
+  "cost_class": "medium",
+  "models": [
+    {
+      "id": "gpt-4o",
+      "aliases": ["gpt4o"],
+      "max_context_tokens": 128000,
+      "capabilities": ["tools", "streaming", "vision", "json_mode"]
+    },
+    {
+      "id": "gpt-4o-mini",
+      "aliases": ["gpt4o-mini"],
+      "max_context_tokens": 128000,
+      "capabilities": ["tools", "streaming", "json_mode"]
+    }
+  ]
+}

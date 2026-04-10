@@ -1,0 +1,46 @@
+services:
+  control-plane:
+    build:
+      context: ..
+      dockerfile: docker/images/control-plane/Dockerfile
+      target: builder
+    container_name: zclaw-control-plane-dev
+    volumes:
+      - ../cmd:/src/cmd
+      - ../internal:/src/internal
+      - ../go.mod:/src/go.mod
+      - ../go.sum:/src/go.sum
+      - ../data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - ../.env
+    environment:
+      - ZCLAW_DATA_DIR=/data
+      - ZCLAW_DB_PATH=/data/zclaw.db
+      - ZCLAW_LOG_LEVEL=debug
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "2345:2345"
+    command: ["go", "run", "./cmd/dockclawd"]
+    networks:
+      - zclaw-net
+
+  browser-worker:
+    build:
+      context: ..
+      dockerfile: docker/images/browser-worker/Dockerfile
+    volumes:
+      - ../browser-worker/src:/app/src
+    environment:
+      - PORT=9222
+      - MAX_SESSIONS=5
+    ports:
+      - "9222:9222"
+    shm_size: "2gb"
+    networks:
+      - zclaw-net
+
+networks:
+  zclaw-net:
+    driver: bridge

@@ -1,0 +1,25 @@
+{
+  "name": "research-agent",
+  "description": "A web research agent that browses and summarizes",
+  "provider": {
+    "provider_id": "openai",
+    "model": "gpt-4o-mini",
+    "system_prompt": "You are a research assistant. When given a topic, search the web and provide a concise summary with key findings.",
+    "temperature": 0.3
+  },
+  "schedule": {
+    "cron": "0 9 * * 1-5",
+    "enabled": true,
+    "jitter_seconds": 60
+  },
+  "policy": {
+    "allow_shell": false,
+    "allow_browser": true,
+    "max_memory_mb": 256,
+    "timeout_seconds": 120,
+    "max_concurrent_tasks": 1,
+    "network_mode": "full",
+    "filesystem_mode": "read-write"
+  },
+  "tags": ["research", "web"]
+}

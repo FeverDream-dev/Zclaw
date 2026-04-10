@@ -1,0 +1,85 @@
+services:
+  control-plane:
+    build:
+      context: ..
+      dockerfile: docker/images/control-plane/Dockerfile
+    container_name: zclaw-control-plane
+    ports:
+      - "${ZCLAW_HTTP_PORT:-8080}:8080"
+      - "${ZCLAW_HEALTH_PORT:-8081}:8081"
+    volumes:
+      - ../data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - ../.env
+    environment:
+      - ZCLAW_DATA_DIR=/data
+      - ZCLAW_DB_PATH=/data/zclaw.db
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - zclaw-net
+
+  browser-worker:
+    build:
+      context: ..
+      dockerfile: docker/images/browser-worker/Dockerfile
+    container_name: zclaw-browser-worker
+    ports:
+      - "${ZCLAW_BROWSER_PORT:-9222}:9222"
+    shm_size: "2gb"
+    environment:
+      - PORT=9222
+      - MAX_SESSIONS=${ZCLAW_BROWSER_POOL_SIZE:-5}
+      - SESSION_TIMEOUT_MS=1800000
+      - IDLE_TIMEOUT_MS=600000
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9222/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    networks:
+      - zclaw-net
+
+  tool-worker:
+    build:
+      context: ..
+      dockerfile: docker/images/tool-worker/Dockerfile
+    container_name: zclaw-tool-worker-base
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - zclaw-net
+    profiles:
+      - manual
+
+networks:
+  zclaw-net:
+    driver: bridge
+
+volumes:
+  zclaw-data:

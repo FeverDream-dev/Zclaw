@@ -1,0 +1,26 @@
+{
+  "name": "code-agent",
+  "description": "A coding agent that can execute shell commands and write files",
+  "provider": {
+    "provider_id": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "system_prompt": "You are a senior software engineer. Write clean, tested code. Prefer simple solutions over clever ones.",
+    "temperature": 0.2
+  },
+  "schedule": {
+    "cron": "",
+    "enabled": false,
+    "jitter_seconds": 30
+  },
+  "policy": {
+    "allow_shell": true,
+    "allow_browser": false,
+    "allow_background_subagents": false,
+    "max_memory_mb": 512,
+    "timeout_seconds": 300,
+    "max_concurrent_tasks": 1,
+    "network_mode": "restricted",
+    "filesystem_mode": "read-write"
+  },
+  "tags": ["coding", "development"]
+}
