@@ -14,9 +14,10 @@ import (
 
 	"github.com/zclaw/zclaw/internal/agents"
 	"github.com/zclaw/zclaw/internal/api"
+	"github.com/zclaw/zclaw/internal/auth"
 	"github.com/zclaw/zclaw/internal/browser"
+	"github.com/zclaw/zclaw/internal/config"
 	"github.com/zclaw/zclaw/internal/connections"
-	"github.com/zclaw/zclaw/internal/memory"
 	"github.com/zclaw/zclaw/internal/providers"
 	"github.com/zclaw/zclaw/internal/providers/adapters"
 	"github.com/zclaw/zclaw/internal/scheduler"
@@ -25,42 +26,10 @@ import (
 	"github.com/zclaw/zclaw/internal/tools"
 )
 
-const version = "0.1.0"
-
-type Config struct {
-	DataDir         string
-	DBPath          string
-	HTTPPort        int
-	HealthPort      int
-	LogLevel        string
-	BrowserWSURL    string
-	DockerSocket    string
-	WorkerPoolSize  int
-	BrowserPoolSize int
-	HeartbeatJitter int
-	DefaultProvider string
-	DefaultModel    string
-}
-
-func loadConfig() Config {
-	return Config{
-		DataDir:         envOr("ZCLAW_DATA_DIR", "./data"),
-		DBPath:          envOr("ZCLAW_DB_PATH", "./data/zclaw.db"),
-		HTTPPort:        envIntOr("ZCLAW_HTTP_PORT", 8080),
-		HealthPort:      envIntOr("ZCLAW_HEALTH_PORT", 8081),
-		LogLevel:        envOr("ZCLAW_LOG_LEVEL", "info"),
-		BrowserWSURL:    envOr("ZCLAW_BROWSER_WORKER_URL", "ws://browser-worker:9222"),
-		DockerSocket:    envOr("ZCLAW_DOCKER_SOCKET", "/var/run/docker.sock"),
-		WorkerPoolSize:  envIntOr("ZCLAW_WORKER_POOL_SIZE", 10),
-		BrowserPoolSize: envIntOr("ZCLAW_BROWSER_POOL_SIZE", 5),
-		HeartbeatJitter: envIntOr("ZCLAW_HEARTBEAT_JITTER_SECONDS", 30),
-		DefaultProvider: envOr("ZCLAW_DEFAULT_MODEL_PROVIDER", "openai"),
-		DefaultModel:    envOr("ZCLAW_DEFAULT_MODEL", "gpt-4o-mini"),
-	}
-}
+const version = config.Version
 
 func main() {
-	cfg := loadConfig()
+	cfg := config.Load()
 
 	level := slog.LevelInfo
 	switch cfg.LogLevel {
@@ -97,7 +66,7 @@ func main() {
 	}
 }
 
-func run(cfg Config) error {
+func run(cfg config.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -215,6 +184,24 @@ func run(cfg Config) error {
 	_ = templateRepo
 	slog.Info("sub-agent system initialized")
 
+	// Auth initialization.
+	var authService auth.AuthService
+	if cfg.AuthEnabled {
+		apiKeyRepo := storage.NewAPIKeyRepository(db)
+		userRepo := storage.NewUserRepository(db)
+		authStore := storage.NewAuthStore(apiKeyRepo, userRepo)
+		authService = auth.NewAuthService(authStore, cfg.JWTSecret)
+
+		if cfg.AdminAPIKey != "" {
+			if err := bootstrapAdmin(ctx, db, cfg); err != nil {
+				slog.Warn("admin bootstrap skipped", "error", err)
+			}
+		}
+		slog.Info("auth enabled", "admin_configured", cfg.AdminAPIKey != "")
+	} else {
+		slog.Info("auth disabled — all requests run as admin")
+	}
+
 	mux := http.NewServeMux()
 	registerRoutes(mux, agentRepo, providerReg, providerConfigRepo, sched, browserMgr, metrics, healthMon, audit, cfg)
 
@@ -231,9 +218,22 @@ func run(cfg Config) error {
 	registerConnectionRoutes(mux, connMgr)
 	registerSubAgentRoutes(mux, subAgentRepo)
 
+	var handler http.Handler = mux
+	handler = api.RecoveryMiddleware(handler)
+	handler = api.CorsMiddleware(handler)
+	handler = api.LoggingMiddleware(handler)
+	handler = api.RateLimitMiddleware(api.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst))(handler)
+	handler = api.AuthMiddleware(api.AuthMiddlewareConfig{
+		AuthService:  authService,
+		AuthEnabled:  cfg.AuthEnabled,
+		AdminAPIKey:  cfg.AdminAPIKey,
+		APIKeyPrefix: cfg.APIKeyPrefix,
+		PublicPaths:  map[string]bool{"/health": true},
+	})(handler)
+
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -289,7 +289,72 @@ func run(cfg Config) error {
 	return nil
 }
 
-func registerProviders(reg *providers.LocalRegistry, cfg Config) {
+func bootstrapAdmin(ctx context.Context, db *storage.DB, cfg config.Config) error {
+	tenantRepo := storage.NewTenantRepository(db)
+	userRepo := storage.NewUserRepository(db)
+	apiKeyRepo := storage.NewAPIKeyRepository(db)
+
+	tenant, err := tenantRepo.GetBySlug(ctx, "default")
+	if err != nil {
+		tenant, err = tenantRepo.Create(ctx, "Default", "default", 300)
+		if err != nil {
+			return fmt.Errorf("create default tenant: %w", err)
+		}
+		slog.Info("bootstrapped default tenant", "id", tenant.ID)
+	}
+
+	users, err := userRepo.ListByTenant(ctx, tenant.ID)
+	if err != nil {
+		return fmt.Errorf("list users: %w", err)
+	}
+
+	adminEmail := "admin@zclaw.local"
+	var adminUser *auth.User
+	for _, u := range users {
+		if u.Role == auth.RoleAdmin {
+			adminUser = &u
+			break
+		}
+	}
+
+	if adminUser == nil {
+		adminUser, err = userRepo.Create(ctx, tenant.ID, adminEmail, "Admin", string(auth.RoleAdmin))
+		if err != nil {
+			return fmt.Errorf("create admin user: %w", err)
+		}
+		slog.Info("bootstrapped admin user", "id", adminUser.ID)
+	}
+
+	existingKeys, err := apiKeyRepo.ListByUser(ctx, adminUser.ID)
+	if err != nil {
+		return fmt.Errorf("list admin keys: %w", err)
+	}
+
+	for _, k := range existingKeys {
+		if k.Name == "admin-bootstrap" {
+			return nil
+		}
+	}
+
+	plainKey, hash, err := auth.GenerateAPIKey(cfg.APIKeyPrefix)
+	if err != nil {
+		return fmt.Errorf("generate admin key: %w", err)
+	}
+
+	_, err = apiKeyRepo.Create(ctx, adminUser.ID, tenant.ID, "admin-bootstrap",
+		plainKey[:8], hash, string(auth.RoleAdmin), nil)
+	if err != nil {
+		return fmt.Errorf("store admin key: %w", err)
+	}
+
+	slog.Info("bootstrapped admin API key (bootstrap key, not the env var)",
+		"prefix", plainKey[:8],
+		"tenant", string(tenant.ID))
+	_ = plainKey
+	return nil
+}
+
+func registerProviders(reg *providers.LocalRegistry, cfg config.Config) {
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		reg.Register(context.Background(), adapters.NewOpenAIAdapter(key, ""))
 	}
@@ -362,7 +427,7 @@ func registerProviders(reg *providers.LocalRegistry, cfg Config) {
 	}
 }
 
-func registerRoutes(mux *http.ServeMux, agentRepo *storage.AgentRepository, provReg *providers.LocalRegistry, provCfgRepo *storage.ProviderConfigRepository, sched *scheduler.Scheduler, browserMgr *browser.LocalSessionManager, metrics *telemetry.MetricsCollector, healthMon *telemetry.HealthMonitor, audit *telemetry.LogAuditLogger, cfg Config) {
+func registerRoutes(mux *http.ServeMux, agentRepo *storage.AgentRepository, provReg *providers.LocalRegistry, provCfgRepo *storage.ProviderConfigRepository, sched *scheduler.Scheduler, browserMgr *browser.LocalSessionManager, metrics *telemetry.MetricsCollector, healthMon *telemetry.HealthMonitor, audit *telemetry.LogAuditLogger, cfg config.Config) {
 	mux.HandleFunc("GET /api/v1/agents", func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -484,7 +549,7 @@ func registerRoutes(mux *http.ServeMux, agentRepo *storage.AgentRepository, prov
 	})
 }
 
-func runMigrate(cfg Config) error {
+func runMigrate(cfg config.Config) error {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -494,7 +559,7 @@ func runMigrate(cfg Config) error {
 	return db.Migrate(ctx)
 }
 
-func runBackup(cfg Config) error {
+func runBackup(cfg config.Config) error {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -511,18 +576,6 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
-
-func envIntOr(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-// Suppress unused imports for memory package (used in full API routes).
-var _ memory.ConversationID
 
 func registerBuiltinTools(reg *tools.LocalToolRegistry) {
 	builtins := []tools.ToolExecutor{
