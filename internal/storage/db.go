@@ -85,6 +85,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 		migrationV7,
 		migrationV8,
 		migrationV9,
+		migrationV10,
+		migrationV11,
+		migrationV12,
 	}
 
 	for i, m := range migrations {
@@ -341,6 +344,101 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_connections_agent ON connections(agent_id);
+`
+
+const migrationV10 = `
+CREATE TABLE IF NOT EXISTS tenants (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	slug TEXT NOT NULL UNIQUE,
+	is_active INTEGER NOT NULL DEFAULT 1,
+	max_agents INTEGER NOT NULL DEFAULT 100,
+	metadata TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	is_active INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	UNIQUE(tenant_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id);
+`
+
+const migrationV11 = `
+CREATE TABLE IF NOT EXISTS users (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	email TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	role TEXT NOT NULL DEFAULT 'viewer',
+	is_active INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	UNIQUE(tenant_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name TEXT NOT NULL DEFAULT '',
+	key_prefix TEXT NOT NULL,
+	key_hash TEXT NOT NULL UNIQUE,
+	role TEXT NOT NULL DEFAULT 'agent',
+	expires_at TEXT,
+	last_used_at TEXT,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_apikeys_user ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_apikeys_tenant ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_apikeys_hash ON api_keys(key_hash);
+`
+
+const migrationV12 = `
+CREATE TABLE IF NOT EXISTS chat_sessions (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	user_id TEXT,
+	agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+	visitor_id TEXT NOT NULL DEFAULT '',
+	title TEXT NOT NULL DEFAULT '',
+	state TEXT NOT NULL DEFAULT 'active',
+	metadata TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON chat_sessions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON chat_sessions(agent_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON chat_sessions(visitor_id);
+
+CREATE TABLE IF NOT EXISTS widget_profiles (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+	theme TEXT NOT NULL DEFAULT '{"primary_color":"#6366f1","position":"bottom-right","greeting":"Hi! How can I help?"}',
+	allowed_origins TEXT NOT NULL DEFAULT '[]',
+	is_active INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	UNIQUE(tenant_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_widgets_tenant ON widget_profiles(tenant_id);
 `
 
 // AgentRepository implements agents.Registry using SQLite.
