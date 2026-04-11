@@ -1,30 +1,35 @@
-# ADR-001: Go for Control Plane
+# ADR-001: Why Go for control plane
 
 ## Status
-Accepted
+Proposed
 
 ## Context
-ZClaw needs a control plane that manages 100–300 logical agents on a single server with minimal idle CPU and memory overhead. The control plane handles orchestration, scheduling, storage, Docker interaction, and provider API calls. We must choose a language that serves as the single always-on process.
+- ZClaw's control plane must orchestrate 100-300 logical agents on a single Linux host with very limited memory headroom.
+- The control plane communicates with a Playwright-based browser sidecar that runs in a separate process; reliability of the browser workers is critical but should be isolated from the orchestrator logic.
+- We need a language/runtime with a small binary, low runtime overhead, strong concurrency primitives, and predictable ops for deployment at scale.
+- Node-based control plane would imply embedding a full Node runtime and V8 heap into the control loop, which increases binary size, memory footprint, and operator surface area. There is a known Node browser-worker exception risk when scaling to hundreds of concurrent browser tasks.
+- The density target of 100-300 agents implies the control plane must efficiently schedule, monitor, and recover a large number of lightweight agent state machines while keeping memory usage predictable.
+- We also aim for fast deploys, straightforward instrumentation, and simple cross-compilation and binary distribution.
 
 ## Decision
-Use Go as the primary language for the control plane service (`dockclawd`).
-
-Go provides:
-- Single static binary under 30MB (multi-stage Alpine build)
-- Native concurrency via goroutines for scheduler, worker pool, and API server
-- Lower baseline memory (~20–40MB idle) compared to Node (~80–150MB) or Python runtimes
-- Excellent Docker and SQLite ecosystem support
-- No runtime dependency on Node, Python, or any interpreter
-
-Node is retained exclusively for the Playwright browser worker sidecar where the Playwright API ecosystem is strongest.
+- Implement the control plane in Go and maintain a compact, self-contained binary.
+- Structure the orchestrator around a small, event-driven core that uses goroutines for agent-level parallelism and channels for coordination.
+- Expose a stable, language-agnostic API (HTTP/REST and gRPC as needed) for the Node/browser sidecar to interact with the orchestrator, fed by a persistent store for agent state.
+- Keep the browser workers in Playwright as a separate Node-based sidecar process; the Go control plane schedules tasks and communicates with the Node sidecar via the defined API, isolating Node's runtime from the core control plane.
+- Favor a hexagonal architecture where the data layer (SQLite/Postgres interface later) and the delivery layer (API) are decoupled from the orchestration/core logic.
+- Leverage Go's native tooling for static builds, cross-compilation, and straightforward deployment in containerless or minimal-container environments.
+- Document and implement explicit error boundaries around the Node browser-worker boundary to avoid cascading failures into the control plane.
 
 ## Consequences
-- Control plane is a small, self-contained binary
-- All agent orchestration, storage, and scheduling logic lives in one codebase
-- Browser worker remains a separate Node container with its own lifecycle
-- Operators need no host-level language runtimes
+- Smaller, faster-to-start binary improves boot times and reduces memory pressure under load; the 100-300 agent target becomes more predictable to run on commodity hardware.
+- Go's concurrency primitives enable high-throughput scheduling of hundreds of agents with relatively low memory overhead per goroutine, improving density resilience.
+- A clear boundary between the Go control plane and the Node Playwright sidecar reduces fault domains and simplifies recovery/upgrade paths.
+- Observability and debugging tooling in Go are straightforward, aiding operator onboarding and incident response.
+- The Node browser-worker boundary introduces an IPC/serialization cost and a potential bottleneck at the sidecar API, which we mitigate with asynchronous queues and backpressure controls.
+- Potential downsides include the need to maintain a Go-Node bridge and ensure that the browser sidecar protocol remains stable across releases.
 
 ## Alternatives Considered
-- **Node.js**: Good ecosystem, but higher memory baseline. A Node control plane managing 300 agents would consume significantly more RAM at idle.
-- **Rust**: Excellent performance and memory, but slower iteration, smaller ecosystem for Docker/SQLite, and steeper contributor requirements.
-- **Python**: Strong AI/ML ecosystem, but GIL limitations for concurrency, heavier runtime, and worse density characteristics.
+- Node as the control plane: offers native JavaScript ecosystem cohesion but incurs a heavier runtime, larger binary, and more memory per process; would complicate scaling to 100-300 agents.
+- Rust: promises small binaries and strong safety; however, Go provides simpler ergonomics, faster iteration, and a broader ops ecosystem, which aligns better with rapid deployment and maintenance in production.
+- Python: rapid development but higher memory footprint and Global Interpreter Lock (GIL) implications reduce true concurrency for scheduling hundreds of agents.
+- C/C++: potential for minimal footprint but increases complexity of build, safety, and long-term maintainability.
