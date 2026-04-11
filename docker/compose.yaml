@@ -1,85 +1,97 @@
+# Production Docker Compose (no version field to comply with Docker Compose Specification)
+# - Services: control-plane, browser-worker (optional), tool-worker (optional)
+# - Shared network: zclaw-net (bridge)
+# - Data persistence via host bind mount (./data) to /data in containers
+
 services:
   control-plane:
     build:
-      context: ..
-      dockerfile: docker/images/control-plane/Dockerfile
-    container_name: zclaw-control-plane
+      context: docker/images/control-plane
+      dockerfile: Dockerfile
+    image: zclaw/control-plane:prod
     ports:
-      - "${ZCLAW_HTTP_PORT:-8080}:8080"
-      - "${ZCLAW_HEALTH_PORT:-8081}:8081"
+      - "8080:8080"      # API
+      - "8081:8081"      # Health/metrics
     volumes:
-      - ../data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock  # for worker orchestration
     env_file:
-      - ../.env
+      - docker/env.example
     environment:
       - ZCLAW_DATA_DIR=/data
       - ZCLAW_DB_PATH=/data/zclaw.db
+      - ZCLAW_DOCKER_SOCKET=/var/run/docker.sock
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
+    networks:
+      - zclaw-net
+    labels:
+      com.zclaw.project: zclaw
+      com.zclaw.environment: production
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: "0.5"
-    networks:
-      - zclaw-net
+          cpus: '0.50'
 
   browser-worker:
     build:
-      context: ..
-      dockerfile: docker/images/browser-worker/Dockerfile
-    container_name: zclaw-browser-worker
+      context: docker/images/browser-worker
+      dockerfile: Dockerfile
+    image: zclaw/browser-worker:prod
     ports:
-      - "${ZCLAW_BROWSER_PORT:-9222}:9222"
-    shm_size: "2gb"
-    environment:
-      - PORT=9222
-      - MAX_SESSIONS=${ZCLAW_BROWSER_POOL_SIZE:-5}
-      - SESSION_TIMEOUT_MS=1800000
-      - IDLE_TIMEOUT_MS=600000
+      - "9222:9222"       # Playwright debugging WebSocket
+    shm_size: 2g           # Chromium shared memory
+    depends_on:
+      - control-plane
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9222/health"]
-      interval: 20s
-      timeout: 5s
+      test: ["CMD-SHELL", "curl -f http://localhost:9222/health || exit 1"]
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 30s
-    restart: unless-stopped
+    environment:
+      - ZCLAW_DATA_DIR=/data
+    volumes:
+      - ./data:/data
+    networks:
+      - zclaw-net
+    labels:
+      com.zclaw.environment: production
+      com.zclaw.role: browser-worker
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: "1.0"
-    depends_on:
-      control-plane:
-        condition: service_healthy
-    networks:
-      - zclaw-net
+          memory: 1024M
+          cpus: '1.0'
 
   tool-worker:
     build:
-      context: ..
-      dockerfile: docker/images/tool-worker/Dockerfile
-    container_name: zclaw-tool-worker-base
-    restart: "no"
+      context: docker/images/tool-worker
+      dockerfile: Dockerfile
+    image: zclaw/tool-worker:prod
+    volumes:
+      - ./data:/data
+    environment:
+      - ZCLAW_DATA_DIR=/data
+    networks:
+      - zclaw-net
+    labels:
+      com.zclaw.environment: production
+      com.zclaw.role: tool-worker
     deploy:
       resources:
         limits:
           memory: 256M
-          cpus: "0.25"
-    networks:
-      - zclaw-net
-    profiles:
-      - manual
+          cpus: '0.25'
 
 networks:
   zclaw-net:
     driver: bridge
 
 volumes:
-  zclaw-data:
+  data:
+    name: zclaw-data

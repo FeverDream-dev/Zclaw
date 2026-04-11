@@ -1,43 +1,57 @@
 services:
   control-plane:
     build:
-      context: ..
-      dockerfile: docker/images/control-plane/Dockerfile
-      target: builder
-    container_name: zclaw-control-plane-dev
-    volumes:
-      - ../cmd:/src/cmd
-      - ../internal:/src/internal
-      - ../go.mod:/src/go.mod
-      - ../go.sum:/src/go.sum
-      - ../data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - ../.env
-    environment:
-      - ZCLAW_DATA_DIR=/data
-      - ZCLAW_DB_PATH=/data/zclaw.db
-      - ZCLAW_LOG_LEVEL=debug
+      context: docker/images/control-plane
+      dockerfile: Dockerfile
+    image: zclaw/control-plane:dev
     ports:
       - "8080:8080"
       - "8081:8081"
-      - "2345:2345"
-    command: ["go", "run", "./cmd/dockclawd"]
+      - "6060:6060"
+    volumes:
+      - ..:/workspace
+      - ./data:/data
+    environment:
+      - ZCLAW_LOG_LEVEL=debug
+      - ZCLAW_DATA_DIR=/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - zclaw-net
+    labels:
+      com.zclaw.environment: development
 
   browser-worker:
     build:
-      context: ..
-      dockerfile: docker/images/browser-worker/Dockerfile
-    volumes:
-      - ../browser-worker/src:/app/src
-    environment:
-      - PORT=9222
-      - MAX_SESSIONS=5
+      context: docker/images/browser-worker
+      dockerfile: Dockerfile
+    image: zclaw/browser-worker:dev
     ports:
       - "9222:9222"
-    shm_size: "2gb"
+    shm_size: 2g
+    volumes:
+      - ..:/workspace
+      - ./data:/data
+    environment:
+      - ZCLAW_LOG_LEVEL=debug
+    depends_on:
+      - control-plane
+    networks:
+      - zclaw-net
+
+  tool-worker:
+    build:
+      context: docker/images/tool-worker
+      dockerfile: Dockerfile
+    image: zclaw/tool-worker:dev
+    volumes:
+      - ..:/workspace
+      - ./data:/data
+    environment:
+      - ZCLAW_LOG_LEVEL=debug
     networks:
       - zclaw-net
 
